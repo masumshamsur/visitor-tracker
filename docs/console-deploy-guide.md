@@ -545,19 +545,21 @@ The `ADDRESS` column fills in with something like `k8s-api-…elb.amazonaws.com`
 
 # Phase 7 · CI/CD with GitHub Actions
 
-## Step 20 · Create the GitHub repository
+## Step 20 · Check the GitHub repository
 
-**Goal:** an empty repository. You push the code later, in Step 25, once AWS is ready to accept the pipeline.
+**Goal:** confirm the repository the pipeline runs in.
 
 **Time:** 3 min · **Cost:** free
 
-1. On github.com → **New repository**.
-2. **Name:** `visitor-tracker`. **Visibility:** **Public**. A public repo is good for a portfolio, and required reviewers on environments (Step 24) are free only on public repos with a free GitHub plan.
-3. Don't add a README, .gitignore or license (the project already has them) → **Create repository**.
-4. Note your full repo name, for example `your-username/visitor-tracker`.
+The repository already exists and holds the code: **https://github.com/masumshamsur/visitor-tracker** (public). A public repo is good for a portfolio, and required reviewers on environments (Step 24) are free only on public repos with a free GitHub plan.
+
+1. Open the repo and check the code and README are there.
+2. Open the **Actions** tab. Each push so far ran the **ci-cd** workflow: `preflight` and `test` run, and the other jobs show as **skipped**. That's expected: `terraform-check` waits for a `terraform/` folder, and `build-scan-push` and `deploy` wait for the AWS secret you add in Step 24.
+3. Your full repo name is `masumshamsur/visitor-tracker`. Steps 22 and T5 use it.
 
 ### Verify
-- [ ] The empty repository exists
+- [ ] The repository shows the project files and README
+- [ ] The latest **ci-cd** run is green, with `preflight` and `test` passed and the other jobs skipped
 
 ## Step 21 · Add GitHub as an identity provider in IAM
 
@@ -586,17 +588,17 @@ The `ADDRESS` column fills in with something like `k8s-api-…elb.amazonaws.com`
 2. **Trusted entity type:** **Web identity**.
    - **Identity provider:** `token.actions.githubusercontent.com`
    - **Audience:** `sts.amazonaws.com`
-   - **GitHub organization:** your GitHub username
+   - **GitHub organization:** `masumshamsur`
    - **GitHub repository:** `visitor-tracker`
    - **GitHub branch:** `main` → **Next**
 3. Skip adding permissions → **Next**. **Role name:** `visitor-tracker-github-ci` → **Create role**.
-4. **Fix the trust policy.** The deploy job uses the `production` environment, and GitHub then identifies it as `environment:production` instead of the branch. Open the role → **Trust relationships** → **Edit trust policy**. Replace the `token.actions.githubusercontent.com:sub` condition so it allows both values (put in your username):
+4. **Fix the trust policy.** The deploy job uses the `production` environment, and GitHub then identifies it as `environment:production` instead of the branch. Open the role → **Trust relationships** → **Edit trust policy**. Replace the `token.actions.githubusercontent.com:sub` condition so it allows both values:
 
 ```json
 "StringLike": {
   "token.actions.githubusercontent.com:sub": [
-    "repo:YOUR-USERNAME/visitor-tracker:ref:refs/heads/main",
-    "repo:YOUR-USERNAME/visitor-tracker:environment:production"
+    "repo:masumshamsur/visitor-tracker:ref:refs/heads/main",
+    "repo:masumshamsur/visitor-tracker:environment:production"
   ]
 }
 ```
@@ -669,24 +671,22 @@ The `ADDRESS` column fills in with something like `k8s-api-…elb.amazonaws.com`
 - [ ] The secret `AWS_CI_ROLE_ARN` is listed
 - [ ] The `production` environment has you as a required reviewer
 
-## Step 25 · Push the code and run the pipeline
+## Step 25 · Run the full pipeline
 
 **Goal:** a push to `main` tests, builds, scans and deploys the app automatically.
 
 **Time:** 15 min · **Cost:** free (GitHub Actions minutes are free on public repos)
 
-1. From the `visitor-tracker` folder, commit and push (use your username):
+1. The code is already on GitHub. Now that the secret exists (Step 24), trigger a new run with an empty commit, from the `visitor-tracker` folder:
 
 ```bash
-git init -b main
-git add .
-git commit -m "Initial commit: visitor-tracker"
-git remote add origin https://github.com/YOUR-USERNAME/visitor-tracker.git
-git push -u origin main
+git commit --allow-empty -m "Run the pipeline against AWS"
+git push
 ```
 
 2. GitHub → **Actions** tab → open the running **ci-cd** workflow. Watch the jobs:
-   - `test` and `terraform-check` run in parallel
+   - `preflight` checks what's set up. It now finds the AWS secret, so the build and deploy jobs will run
+   - `test` runs the unit tests (`terraform-check` stays skipped until attempt 2 adds the `terraform/` folder)
    - `build-scan-push` builds the image, scans it with Trivy and pushes it to ECR tagged with the short commit SHA
    - `deploy` pauses with **Waiting for review**
 3. Click **Review deployments** → tick `production` → **Approve and deploy**.
@@ -695,7 +695,7 @@ git push -u origin main
 > **If `build-scan-push` fails at "Configure AWS credentials":** check the secret value and the trust policy username (Step 22). **If it fails at the Trivy scan:** the base image has a fixable HIGH or CRITICAL vulnerability. Read the table in the log. Usually a newer `python:3.12-slim` fixes it.
 
 ### Verify
-- [ ] All four jobs are green
+- [ ] `preflight`, `test`, `build-scan-push` and `deploy` are green (`terraform-check` skipped)
 - [ ] ECR shows a new image tagged with a 7-character commit SHA
 - [ ] `kubectl -n visitor-tracker get deploy api -o jsonpath='{.spec.template.spec.containers[0].image}'` prints the SHA-tagged image
 
@@ -1178,7 +1178,7 @@ variable "node_instance_type" {
 }
 
 variable "github_repo" {
-  description = "Your GitHub repository as owner/name, e.g. your-username/visitor-tracker"
+  description = "Your GitHub repository as owner/name, e.g. masumshamsur/visitor-tracker"
   type        = string
 }
 ```
@@ -1193,7 +1193,7 @@ What it does:
 ```hcl
 # Copy this file to terraform.tfvars and change the value.
 # terraform.tfvars is in .gitignore, so it is never committed.
-github_repo = "your-username/visitor-tracker"
+github_repo = "masumshamsur/visitor-tracker"
 ```
 
 3. Make your real values file and edit it with your GitHub username:
