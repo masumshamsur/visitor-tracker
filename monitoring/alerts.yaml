@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: api-alerts
+  namespace: visitor-tracker
+  labels: { release: monitoring }
+spec:
+  groups:
+    - name: api
+      rules:
+        - alert: ApiPodsNotReady
+          expr: kube_deployment_status_replicas_available{namespace="visitor-tracker",deployment="api"} < 1
+          for: 2m
+          labels: { severity: critical }
+          annotations: { summary: "No ready API pods in visitor-tracker namespace" }
+        - alert: ApiHighCpu
+          expr: sum(rate(container_cpu_usage_seconds_total{namespace="visitor-tracker",container="api"}[5m])) > 1
+          for: 10m
+          labels: { severity: warning }
+          annotations: { summary: "API CPU usage above 1 core for 10m" }

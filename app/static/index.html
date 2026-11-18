@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>visitor-tracker</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #5b6270;
+      --border: #e2e5ea; --accent: #2f6fed; --accent-text: #ffffff;
+      --ok: #1f8a4c; --ok-bg: #e5f5ec; --bad: #c0392b; --bad-bg: #fbe9e7;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1115; --card: #171a21; --text: #e8eaee; --muted: #9aa1ad;
+        --border: #262b35; --accent: #5b8cff; --accent-text: #0f1115;
+        --ok: #4cc38a; --ok-bg: #12291d; --bad: #ff7a6b; --bad-bg: #2e1614;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 760px; margin: 0 auto; padding: 40px 16px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    h1 { font-size: 22px; margin: 0; }
+    .sub { color: var(--muted); margin: 4px 0 28px; }
+    .badge { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px; }
+    .badge.ok { color: var(--ok); background: var(--ok-bg); }
+    .badge.bad { color: var(--bad); background: var(--bad-bg); }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; overflow-wrap: anywhere; }
+    .value.small { font-size: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding-top: 8px; }
+    .actions { display: flex; gap: 10px; margin: 20px 0; flex-wrap: wrap; }
+    button {
+      font: inherit; font-weight: 600; border-radius: 8px; padding: 10px 16px; cursor: pointer;
+      border: 1px solid var(--accent); background: var(--accent); color: var(--accent-text);
+    }
+    button.secondary { background: transparent; color: var(--accent); }
+    button:disabled { opacity: .6; cursor: wait; }
+    h2 { font-size: 15px; margin: 8px 0 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+    td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .hint { color: var(--muted); font-size: 13px; margin-top: 12px; }
+    .links { margin-top: 28px; font-size: 13px; color: var(--muted); }
+    .links a { color: var(--accent); margin-right: 14px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>visitor-tracker</h1>
+    <span id="health" class="badge">checking…</span>
+  </header>
+  <p class="sub">A visit counter running on Kubernetes. Each request may be served by a different pod.</p>
+
+  <div class="grid">
+    <div class="card"><div class="label">Total visits</div><div class="value" id="visits">–</div></div>
+    <div class="card"><div class="label">Served by pod</div><div class="value small" id="pod">–</div></div>
+    <div class="card"><div class="label">Version</div><div class="value small" id="version">–</div></div>
+  </div>
+
+  <div class="actions">
+    <button id="visit">Send a request</button>
+    <button id="burst" class="secondary">Send 10 requests</button>
+  </div>
+
+  <div class="card">
+    <h2>Recent requests</h2>
+    <table>
+      <thead><tr><th>#</th><th>Pod</th><th>Visits</th><th>Time</th></tr></thead>
+      <tbody id="log"></tbody>
+    </table>
+    <p class="hint" id="pods-hint">Pods seen so far: –</p>
+  </div>
+
+  <p class="links">
+    <a href="/docs">API docs</a><a href="/metrics">Prometheus metrics</a><a href="/readyz">Readiness</a>
+  </p>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const seenPods = new Set();
+  let n = 0;
+
+  async function visit() {
+    const res = await fetch("/api/visit", { method: "POST" });
+    const d = await res.json();
+    $("visits").textContent = d.visits < 0 ? "Redis down" : d.visits.toLocaleString();
+    $("pod").textContent = d.pod;
+    $("version").textContent = d.version;
+    seenPods.add(d.pod);
+    $("pods-hint").textContent = `Pods seen so far: ${seenPods.size} (${[...seenPods].join(", ")})`;
+
+    const row = document.createElement("tr");
+    for (const [text, mono] of [[++n], [d.pod, true], [d.visits], [new Date().toLocaleTimeString()]]) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      if (mono) td.className = "mono";
+      row.appendChild(td);
+    }
+    $("log").prepend(row);
+    while ($("log").children.length > 10) $("log").lastChild.remove();
+  }
+
+  async function checkHealth() {
+    const el = $("health");
+    try {
+      const res = await fetch("/readyz");
+      el.textContent = res.ok ? "Ready" : "Redis unavailable";
+      el.className = "badge " + (res.ok ? "ok" : "bad");
+    } catch {
+      el.textContent = "Unreachable";
+      el.className = "badge bad";
+    }
+  }
+
+  async function run(count, btn) {
+    document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    try { for (let i = 0; i < count; i++) await visit(); }
+    catch { $("health").textContent = "Request failed"; $("health").className = "badge bad"; }
+    finally { document.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
+  }
+
+  $("visit").onclick = () => run(1);
+  $("burst").onclick = () => run(10);
+  checkHealth();
+  setInterval(checkHealth, 10000);
+  run(1);
+</script>
+</body>
+</html>

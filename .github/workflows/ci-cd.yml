@@ -1,0 +1,105 @@
+name: ci-cd
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write   # OIDC to AWS
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: visitor-tracker
+  CLUSTER_NAME: visitor-tracker-eks
+
+jobs:
+  # Decides which jobs can run yet: Terraform checks need a terraform/ folder,
+  # and build/deploy need the AWS_CI_ROLE_ARN secret (guide Step 24).
+  # Until then those jobs are skipped instead of failing.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      has_terraform: ${{ steps.check.outputs.has_terraform }}
+      has_aws: ${{ steps.check.outputs.has_aws }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        env:
+          AWS_CI_ROLE_ARN: ${{ secrets.AWS_CI_ROLE_ARN }}
+        run: |
+          if [ -d terraform ]; then echo "has_terraform=true" >> "$GITHUB_OUTPUT"; else echo "has_terraform=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -n "$AWS_CI_ROLE_ARN" ]; then echo "has_aws=true" >> "$GITHUB_OUTPUT"; else echo "has_aws=false" >> "$GITHUB_OUTPUT"; fi
+
+  test:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: app } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+
+  terraform-check:
+    needs: preflight
+    if: needs.preflight.outputs.has_terraform == 'true'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: terraform } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate
+
+  build-scan-push:
+    needs: [preflight, test, terraform-check]
+    # Run when nothing failed (a skipped terraform-check is fine), on main, once AWS is set up.
+    if: ${{ !failure() && !cancelled() && github.ref == 'refs/heads/main' && needs.preflight.outputs.has_aws == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - id: meta
+        run: echo "image=${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - run: docker build -t "${{ steps.meta.outputs.image }}" .
+      - name: Scan image (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+      - run: docker push "${{ steps.meta.outputs.image }}"
+
+  deploy:
+    needs: build-scan-push
+    runs-on: ubuntu-latest
+    environment: production   # add required reviewers in repo settings for manual approval
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+      - name: Render and apply manifests
+        run: |
+          IMAGE="${{ needs.build-scan-push.outputs.image }}"
+          sed -i "s#IMAGE_PLACEHOLDER#${IMAGE}#; s#VERSION_PLACEHOLDER#${GITHUB_SHA::7}#" k8s/api.yaml
+          kubectl apply -k k8s
+      - name: Wait for rollout (auto-rollback on failure)
+        run: |
+          if ! kubectl -n visitor-tracker rollout status deploy/api --timeout=180s; then
+            kubectl -n visitor-tracker rollout undo deploy/api
+            exit 1
+          fi

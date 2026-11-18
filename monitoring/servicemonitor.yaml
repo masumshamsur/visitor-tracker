@@ -1,0 +1,13 @@
+# Picked up by kube-prometheus-stack (Prometheus Operator) to scrape /metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api
+  namespace: visitor-tracker
+  labels: { release: monitoring }
+spec:
+  selector: { matchLabels: { app: api } }
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

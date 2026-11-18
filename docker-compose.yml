@@ -1,0 +1,13 @@
+# Local development: docker compose up --build  ->  http://localhost:8000
+services:
+  api:
+    build: .   # uses ./Dockerfile; the build context is the project root
+    image: visitor-tracker:local   # build (if needed) and tag the image with this name
+    ports: ["8000:8000"]
+    environment:
+      REDIS_HOST: redis
+      APP_VERSION: local
+    depends_on: [redis]
+  redis:
+    image: redis:7.4-alpine
+    ports: ["6379:6379"]

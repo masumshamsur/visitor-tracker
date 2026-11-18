@@ -1,0 +1,5 @@
+# Build context is the project root: send only what the image needs.
+*
+!app/requirements.txt
+!app/main.py
+!app/static/
