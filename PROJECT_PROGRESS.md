@@ -169,6 +169,8 @@ Steps T1–T16 in `docs/console-deploy-guide.md`. You write the Terraform code y
 
 ## 6. Problems hit and fixes
 
+- **Pipeline: api pods crash on EKS (2026-11-25):** `deploy` timed out waiting for rollout; pods in `CrashLoopBackOff`. Logs: `ValueError: invalid literal for int() with base 10: 'tcp://172.20.143.233:6379'` at `REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))`. Kubernetes adds environment variables for every Service in the namespace; the Service named `redis` creates `REDIS_PORT=tcp://<IP>:6379`, which overrides the app's default. (Docker Compose doesn't do this, so it worked locally.) Fix in `k8s/api.yaml`: `enableServiceLinks: false` and an explicit `REDIS_PORT: "6379"`. The automatic rollback also failed with `no rollout history found`, because this was the first deploy and there was no earlier version to go back to.
+
 - **Pipeline: deploy failed in kustomize (2026-11-25):** `kubectl apply -k k8s` -> `file '.../monitoring/servicemonitor.yaml' is not in or below '.../k8s'`. Kustomize refuses files outside the folder it builds, for security. Fix: moved the file to `k8s/servicemonitor.yaml` and listed it as `servicemonitor.yaml` in `k8s/kustomization.yaml`. `kubectl kustomize k8s` now renders all 9 objects, including the ServiceMonitor.
 
 - **Pipeline: Trivy blocked the image (2026-11-25):** after the OIDC fix, AWS login worked, but the scan found 3 HIGH vulnerabilities in `starlette 0.41.3` (CVE-2025-62727, CVE-2026-48818, CVE-2026-54283; fixed in 1.3.1). Starlette comes with FastAPI. Fix: `app/requirements.txt` `fastapi==0.115.6` -> `fastapi==0.165.0` (pulls in starlette 1.10.0). All 6 tests pass with the new version. The scan gate worked as designed: the vulnerable image was never pushed.

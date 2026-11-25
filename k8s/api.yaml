@@ -14,12 +14,16 @@ spec:
     metadata: { labels: { app: api } }
     spec:
       securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      # Stop Kubernetes adding REDIS_PORT=tcp://... for the "redis" Service,
+      # which would clash with the app's own REDIS_PORT setting.
+      enableServiceLinks: false
       containers:
         - name: api
           image: IMAGE_PLACEHOLDER   # replaced by CI with ECR image:sha
           ports: [{ name: http, containerPort: 8000 }]
           env:
             - { name: REDIS_HOST, value: redis }
+            - { name: REDIS_PORT, value: "6379" }
             - { name: APP_VERSION, value: VERSION_PLACEHOLDER }
           readinessProbe:
             httpGet: { path: /readyz, port: http }
