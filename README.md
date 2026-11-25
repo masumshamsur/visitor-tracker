@@ -50,8 +50,8 @@ terraform/            Infrastructure as code (attempt 2)
   ecr.tf              Image repository           eks.tf        Cluster, add-ons, nodes, access
   iam-github.tf       GitHub OIDC + CI role      iam-lbc.tf    LB Controller role + Pod Identity
   outputs.tf          Values printed after apply
-k8s/                  Kustomize manifests (api, redis, ingress, HPA, PDB)
-monitoring/           ServiceMonitor, alert rules, add-on install script
+k8s/                  Kustomize manifests (api, redis, ingress, HPA, PDB, ServiceMonitor)
+monitoring/           Alert rules, add-on install script
 .github/workflows/    CI/CD pipeline
 docs/                 Architecture diagrams, console deploy guide, Docker guide
 docker-compose.yml    Local dev environment

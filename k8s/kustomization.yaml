@@ -5,4 +5,4 @@ resources:
   - redis.yaml
   - api.yaml
   - ingress.yaml
-  - ../monitoring/servicemonitor.yaml
+  - servicemonitor.yaml
