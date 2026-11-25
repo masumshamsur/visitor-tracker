@@ -32,3 +32,9 @@ variable "github_repo" {
   description = "Your GitHub repository as owner/name, e.g. masumshamsur/visitor-tracker"
   type        = string
 }
+
+variable "github_sub_prefix" {
+  description = "GitHub's immutable OIDC subject prefix (owner and repo with IDs)"
+  type        = string
+  default     = "repo:masumshamsur@128269966/visitor-tracker@1462309980"
+}

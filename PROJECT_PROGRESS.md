@@ -169,6 +169,8 @@ Steps T1–T16 in `docs/console-deploy-guide.md`. You write the Terraform code y
 
 ## 6. Problems hit and fixes
 
+- **Pipeline: could not assume the CI role (2026-11-25):** `build-scan-push` failed at "Configure AWS credentials" with `Not authorized to perform sts:AssumeRoleWithWebIdentity`. The secret, OIDC provider (audience `sts.amazonaws.com`) and trust policy were all correct, but the repo uses GitHub's immutable subject format: `gh api repos/masumshamsur/visitor-tracker/actions/oidc/customization/sub` -> `sub_claim_prefix: repo:masumshamsur@128269966/visitor-tracker@1462309980`. The trust policy only allowed `repo:masumshamsur/visitor-tracker:...`. Fix: add the two immutable-format subjects in `iam-github.tf`, apply, rerun the failed jobs.
+
 - **Pipeline: Trivy action not found (2026-11-25):** run 45547467136 failed in `build-scan-push` at "Set up job": `Unable to resolve action aquasecurity/trivy-action@0.28.0`. The action's tags now start with `v` (`v0.28.0` ... `v0.36.0`). Fix: workflow uses `aquasecurity/trivy-action@v0.36.0`. (`test`, `preflight` and `terraform-check` passed in that run.)
 
 - **No Pod Identity association after apply (2026-11-24):** the EKS console showed 0 Pod Identity associations. `terraform/iam-lbc.tf` was empty (0 bytes, likely never saved), so the Load Balancer Controller's policy, role and association were never planned; the policy JSON in `policies/` was fine. Fix: paste the Step T10 code into `iam-lbc.tf`, save, then plan and apply again. Result: association `aws-load-balancer-controller` in `kube-system` with role `visitor-tracker-lbc-role` shows in the console; all 5 add-ons Active.

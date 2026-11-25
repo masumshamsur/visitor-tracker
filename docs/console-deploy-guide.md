@@ -598,10 +598,14 @@ The repository already exists and holds the code: **https://github.com/masumsham
 "StringLike": {
   "token.actions.githubusercontent.com:sub": [
     "repo:masumshamsur/visitor-tracker:ref:refs/heads/main",
-    "repo:masumshamsur/visitor-tracker:environment:production"
+    "repo:masumshamsur/visitor-tracker:environment:production",
+    "repo:masumshamsur@128269966/visitor-tracker@1462309980:ref:refs/heads/main",
+    "repo:masumshamsur@128269966/visitor-tracker@1462309980:environment:production"
   ]
 }
 ```
+
+> **Why four values?** GitHub now sends an "immutable" subject that includes the owner and repo IDs (`repo:masumshamsur@128269966/visitor-tracker@1462309980:...`). To see your repo's format, run `gh api repos/masumshamsur/visitor-tracker/actions/oidc/customization/sub` and look at `sub_claim_prefix`. Without a matching value, the pipeline fails with `Not authorized to perform sts:AssumeRoleWithWebIdentity`.
 
    Keep the `StringEquals` condition for `aud` as it is → **Update policy**.
 
@@ -1189,12 +1193,19 @@ variable "github_repo" {
   description = "Your GitHub repository as owner/name, e.g. masumshamsur/visitor-tracker"
   type        = string
 }
+
+variable "github_sub_prefix" {
+  description = "GitHub's immutable OIDC subject prefix (owner and repo with IDs)"
+  type        = string
+  default     = "repo:masumshamsur@128269966/visitor-tracker@1462309980"
+}
 ```
 
 What it does:
 - Each `variable` is a setting. Other files use it as `var.project`, `var.region` and so on.
 - `default` is the value used unless you set another one.
 - `github_repo` has **no default**, so you must set it. Terraform asks for it otherwise.
+- `github_sub_prefix` is how GitHub names your repo when it logs in to AWS, with the owner and repo ID numbers. Find yours with `gh api repos/masumshamsur/visitor-tracker/actions/oidc/customization/sub` (the `sub_claim_prefix` value). Step T9 uses it.
 
 2. Create `terraform/terraform.tfvars.example`:
 
@@ -1434,9 +1445,13 @@ data "aws_iam_policy_document" "github_trust" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
+      # Both formats: the classic owner/repo name, and GitHub's
+      # "immutable" one with ID numbers (var.github_sub_prefix).
       values = [
         "repo:${var.github_repo}:ref:refs/heads/main",
         "repo:${var.github_repo}:environment:production",
+        "${var.github_sub_prefix}:ref:refs/heads/main",
+        "${var.github_sub_prefix}:environment:production",
       ]
     }
   }
@@ -1700,7 +1715,43 @@ kubectl -n visitor-tracker get ingress api
 
 Open `http://<ADDRESS>` once the ALB is active (2–4 minutes).
 
-> **If `build-scan-push` fails at "Configure AWS credentials":** check the secret value, and that `github_repo` in `terraform.tfvars` is exactly `masumshamsur/visitor-tracker`. **If `terraform-check` fails at `fmt`:** run `terraform fmt -recursive` in `terraform/`, then commit and push again.
+### Troubleshooting
+
+**`build-scan-push` fails at "Configure AWS credentials" with `Not authorized to perform sts:AssumeRoleWithWebIdentity`**
+
+AWS refused the pipeline's login. Check these in order:
+
+1. **The secret.** `AWS_CI_ROLE_ARN` must be exactly the output of `terraform output -raw github_ci_role_arn`, without the `%` that zsh shows at the end.
+2. **The identity provider.** IAM → **Identity providers** → `token.actions.githubusercontent.com`. Its audience must be `sts.amazonaws.com`.
+3. **The subject GitHub sends.** This is the usual cause. Run:
+
+```bash
+gh api repos/masumshamsur/visitor-tracker/actions/oidc/customization/sub
+```
+
+   If it shows `"use_immutable_subject": true`, GitHub logs in as `repo:masumshamsur@<owner ID>/visitor-tracker@<repo ID>:...` instead of `repo:masumshamsur/visitor-tracker:...`. The role's trust policy must allow that form too.
+
+4. **Compare with the trust policy.**
+
+```bash
+aws iam get-role --role-name visitor-tracker-github-ci --query 'Role.AssumeRolePolicyDocument'
+```
+
+   The `sub` list must contain the `sub_claim_prefix` from step 3, followed by `:ref:refs/heads/main` and `:environment:production`.
+
+**Fix:** set `github_sub_prefix` in `variables.tf` to your `sub_claim_prefix` (Step T5), make sure `iam-github.tf` uses it (Step T9), then from `terraform/`:
+
+```bash
+terraform fmt
+terraform plan -out=tfplan
+terraform apply tfplan
+```
+
+The plan shows **1 to change** (the `visitor-tracker-github-ci` role). Then on GitHub open the failed run → **Re-run jobs** → **Re-run failed jobs**.
+
+**`terraform-check` fails at `fmt`:** run `terraform fmt -recursive` in `terraform/`, then commit and push again.
+
+**`build-scan-push` fails at "Set up job" with `Unable to resolve action aquasecurity/trivy-action@...`:** that version tag doesn't exist. The action's tags start with `v` (for example `v0.36.0`). Fix the `uses:` line in `.github/workflows/ci-cd.yml`, then commit and push.
 
 ### Verify
 - [ ] All pipeline jobs are green, including `terraform-check`

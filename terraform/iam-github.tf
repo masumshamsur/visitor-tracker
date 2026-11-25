@@ -23,6 +23,8 @@ data "aws_iam_policy_document" "github_trust" {
       values = [
         "repo:${var.github_repo}:ref:refs/heads/main",
         "repo:${var.github_repo}:environment:production",
+        "${var.github_sub_prefix}:ref:refs/heads/main",
+        "${var.github_sub_prefix}:environment:production",
       ]
     }
   }
