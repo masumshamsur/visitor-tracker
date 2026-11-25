@@ -28,8 +28,8 @@ The project is done twice:
 - **Attempt:** 2 (Terraform). Console build (Steps 4-31) skipped by choice on 2026-11-18; Phase 0 (Steps 1-3) done
 - **Phase:** Terraform setup
 - **Last step completed:** Step 3 (2026-11-18)
-- **Last Terraform step completed:** T14 (2026-11-24)
-- **Next step:** Step T15 - update secret, deploy through pipeline
+- **Last Terraform step completed:** T16 (2026-11-25). Attempt 2 complete; everything destroyed
+- **Next step:** none. Optional: rebuild later for Steps 27-29 (Grafana, autoscaling, rollback, screenshots)
 
 ## 3. Roadmap: Attempt 1 (Console)
 
@@ -87,8 +87,8 @@ Steps T1–T16 in `docs/console-deploy-guide.md`. You write the Terraform code y
 | T12 | Build        | fmt, validate, `plan -out=tfplan`                          | Done        |
 | T13 | Build        | `apply tfplan`                                             | Done        |
 | T14 | Build        | kubectl + `monitoring/install.sh`                          | Done        |
-| T15 | Deploy       | Update secret, deploy through pipeline                     | Next        |
-| T16 | Destroy      | App, Helm, `terraform destroy`, bootstrap destroy          | Not started |
+| T15 | Deploy       | Update secret, deploy through pipeline                     | Done        |
+| T16 | Destroy      | App, Helm, `terraform destroy`, bootstrap destroy          | Done        |
 
 ## 5. Completed steps (with evidence)
 
@@ -167,7 +167,30 @@ Steps T1–T16 in `docs/console-deploy-guide.md`. You write the Terraform code y
 | Load Balancer Ctrl    | Pass   | `aws-load-balancer-controller` `2/2` READY |
 | Monitoring pods       | Pass   | Alertmanager, Grafana, operator, kube-state-metrics, 2 node-exporters, Prometheus all `Running`, 0 restarts |
 
+### Step T15 - 2026-11-25
+
+| Check                 | Result | Evidence |
+|-----------------------|--------|----------|
+| Secret + environment  | Pass   | `AWS_CI_ROLE_ARN` added; `production` environment with required reviewer `masumshamsur` |
+| Pipeline              | Pass   | Run #10 "Fix REDIS_PORT clash with Kubernetes service links": preflight, test, terraform-check, build-scan-push, deploy all green (2m 8s), after fixes for runs #6-#9 (see Problems) |
+| Pods                  | Pass   | 2 `api` pods and 1 `redis` pod `1/1 Running`, 0 restarts |
+| Ingress               | Pass   | ALB address `k8s-visitort-api-....us-east-1.elb.amazonaws.com` |
+| App in browser        | Pass   | ALB page loads, status `Ready`, version `7b87d86` (commit SHA); Send 10 requests -> 13 visits, alternating between 2 pods (`api-5489dbc7fd-r2fcg`, `api-5489dbc7fd-n7469`); counter shared through Redis |
+
+### Step T16 - 2026-11-25
+
+| Check                 | Result | Evidence |
+|-----------------------|--------|----------|
+| App deleted           | Pass   | `kubectl delete` removed all 9 objects; ALB deleted |
+| Controller leftovers  | Fixed  | Target group `k8s-visitort-api-...` stuck with `ResourceInUse` for 15+ min although no load balancer used it; the 2 `k8s-` security groups were free (no ENIs, no rules), so deleted by hand before destroy (see Problems) |
+| Main destroy          | Pass   | `terraform destroy` -> `Destroy complete! Resources: 67 destroyed` |
+| Bootstrap destroy     | Pass   | `Destroy complete! Resources: 4 destroyed` |
+| AWS check             | Pass   | us-east-1: no EKS clusters, only the default VPC, no instances, Elastic IPs, NAT Gateways, load balancers, target groups, ECR repos, available volumes, `/aws/eks/visitor*` log groups, `visitor-tracker*` IAM roles or state bucket |
+
 ## 6. Problems hit and fixes
+
+- **Teardown: target group stuck "in use" (2026-11-25):** after deleting the app, the ALB went away but its target group couldn't be deleted (`ResourceInUse`, "in use by a listener or a rule", console showed "None associated"). The Load Balancer Controller kept retrying and so didn't delete its 2 security groups, which would have blocked VPC deletion. Fix: checked that the security groups had no ENIs or referencing rules, deleted them by hand, then uninstalled Helm and ran `terraform destroy`. The target group was gone by the end of the destroy.
+
 
 - **Pipeline: api pods crash on EKS (2026-11-25):** `deploy` timed out waiting for rollout; pods in `CrashLoopBackOff`. Logs: `ValueError: invalid literal for int() with base 10: 'tcp://172.20.143.233:6379'` at `REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))`. Kubernetes adds environment variables for every Service in the namespace; the Service named `redis` creates `REDIS_PORT=tcp://<IP>:6379`, which overrides the app's default. (Docker Compose doesn't do this, so it worked locally.) Fix in `k8s/api.yaml`: `enableServiceLinks: false` and an explicit `REDIS_PORT: "6379"`. The automatic rollback also failed with `no rollout history found`, because this was the first deploy and there was no earlier version to go back to.
 

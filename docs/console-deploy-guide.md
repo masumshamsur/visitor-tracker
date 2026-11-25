@@ -1806,7 +1806,49 @@ kubectl config delete-context $(kubectl config current-context)
 
 > `terraform destroy` doesn't touch the GitHub identity provider, because your code only looks it up with a `data` block. That's what you want: another project uses it.
 
+> **If the `k8s-` target group won't delete ("in use by a listener or a rule"):** AWS can hold on to it for a while after the load balancer is gone, and the controller then doesn't delete its 2 `k8s-` security groups. Check that nothing uses them (`aws ec2 describe-network-interfaces --filters Name=group-id,Values=<sg-id>` returns nothing), delete the 2 security groups in **EC2** → **Security Groups**, then carry on with step 2. The target group disappears by itself later.
+
+> **After the destroy:** delete the `AWS_CI_ROLE_ARN` secret on GitHub (or leave it and expect red runs). The role no longer exists, so the next push would fail at "Configure AWS credentials". Without the secret, `preflight` skips the AWS jobs.
+
 > **If `terraform destroy` gets stuck on the VPC or subnets:** a leftover load balancer or network interface is still using them. Check **EC2** → **Load Balancers**, **Target Groups** and **Network Interfaces** for `k8s-` items, delete them, then run `terraform destroy` again.
+
+### What gets deleted, how, and why
+
+Some things live **inside Kubernetes** or were created by a controller, so Terraform has never heard of them. Those you delete yourself, first. Everything Terraform created, Terraform deletes.
+
+**Deleted by you (manually), and why**
+
+| What | How | Why it can't be left to Terraform |
+|---|---|---|
+| App objects: namespace `visitor-tracker`, `api` and `redis` Deployments and Services, HPA, PDB, ServiceMonitor, Ingress | `kubectl delete` (step 1) | They live inside the cluster, created by the pipeline, not by Terraform. |
+| ALB `k8s-visitort-api-…`, its target group and listener | Removed automatically by the Load Balancer Controller when the Ingress is deleted (step 1) | The controller created them, so Terraform doesn't know they exist. If they're left behind, they keep costing money and block the VPC from being deleted. |
+| 2 security groups `k8s-traffic-…` and `k8s-visitort-api-…` | Normally removed by the controller; deleted **by hand** in EC2 → Security Groups when the target group got stuck | Created by the controller. A leftover security group makes `terraform destroy` fail on the VPC with `DependencyViolation`. Only delete them once nothing uses them. |
+| Target group (if stuck) | Retry in EC2 → Target Groups, or wait; AWS removes the "in use" lock after a while | AWS can report "in use by a listener" for some minutes after the ALB is gone. A target group costs nothing and doesn't block the VPC. |
+| Helm releases `monitoring` (Prometheus, Grafana, Alertmanager) and `aws-load-balancer-controller` | `helm uninstall` (step 2) | Installed by the script, not Terraform. Uninstalling before the destroy is clean; remove the controller **after** the ALB is gone, because it's the thing that deletes the ALB. |
+| GitHub secret `AWS_CI_ROLE_ARN` | GitHub → Settings → Secrets | It points to a role that no longer exists. Without it, `preflight` skips the AWS jobs, so pushes stay green. |
+| kubeconfig context for `visitor-tracker-eks` | `kubectl config delete-context …` (step 5) | Only a local file entry pointing at a cluster that's gone. |
+
+**Deleted by `terraform destroy` (step 3, 67 resources), and why**
+
+Terraform deletes everything in its state, in the reverse order it created it.
+
+| File | What gets destroyed | Why it matters |
+|---|---|---|
+| `eks.tf` | The node group (2 EC2 instances and their disks), the 5 add-ons, the EKS cluster, its IAM roles and policy attachments, security groups and rules, access entries, KMS key (AWS keeps it "pending deletion" for 7–30 days, then removes it) and CloudWatch log group | The cluster ($0.10/h) and the nodes are the biggest costs. |
+| `vpc.tf` | NAT Gateway and its Elastic IP, Internet Gateway, 4 subnets, route tables and routes, the VPC | The NAT Gateway costs about $0.045/h even when idle. An unused Elastic IP is charged too. |
+| `ecr.tf` | The `visitor-tracker` repository, its images and lifecycle policy | `force_delete = true` lets it go even with images inside. Images cost a little for storage. |
+| `iam-github.tf` | Role `visitor-tracker-github-ci` and its inline policy | No cost, but a trusted role with no use is a security risk. |
+| `iam-lbc.tf` | Role `visitor-tracker-lbc-role`, its policy, the attachment and the Pod Identity association | No cost; keeps IAM tidy. |
+
+**Deleted by `terraform destroy` in `bootstrap/` (step 4, 4 resources):** the state bucket with its versioning, encryption and public-access block. It goes **last** because the main destroy needs it to read the state. `force_destroy = true` lets Terraform delete it even though it still holds old state versions.
+
+**Kept on purpose**
+
+| What | Why |
+|---|---|
+| GitHub identity provider `token.actions.githubusercontent.com` | Your code only looks it up (a `data` block), so Terraform never deletes it. Another project uses it. |
+| Default VPC | AWS creates it for every account. It isn't part of this project. |
+| Budgets and Cost Anomaly Detection | They watch the whole account and cost nothing. |
 
 ### Verify
 - [ ] Both `terraform destroy` runs end with `Destroy complete!`
