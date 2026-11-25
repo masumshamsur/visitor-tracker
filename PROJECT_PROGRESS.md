@@ -169,6 +169,8 @@ Steps T1–T16 in `docs/console-deploy-guide.md`. You write the Terraform code y
 
 ## 6. Problems hit and fixes
 
+- **Pipeline: Trivy blocked the image (2026-11-25):** after the OIDC fix, AWS login worked, but the scan found 3 HIGH vulnerabilities in `starlette 0.41.3` (CVE-2025-62727, CVE-2026-48818, CVE-2026-54283; fixed in 1.3.1). Starlette comes with FastAPI. Fix: `app/requirements.txt` `fastapi==0.115.6` -> `fastapi==0.165.0` (pulls in starlette 1.10.0). All 6 tests pass with the new version. The scan gate worked as designed: the vulnerable image was never pushed.
+
 - **Pipeline: could not assume the CI role (2026-11-25):** `build-scan-push` failed at "Configure AWS credentials" with `Not authorized to perform sts:AssumeRoleWithWebIdentity`. The secret, OIDC provider (audience `sts.amazonaws.com`) and trust policy were all correct, but the repo uses GitHub's immutable subject format: `gh api repos/masumshamsur/visitor-tracker/actions/oidc/customization/sub` -> `sub_claim_prefix: repo:masumshamsur@128269966/visitor-tracker@1462309980`. The trust policy only allowed `repo:masumshamsur/visitor-tracker:...`. Fix: add the two immutable-format subjects in `iam-github.tf`, apply, rerun the failed jobs.
 
 - **Pipeline: Trivy action not found (2026-11-25):** run 45547467136 failed in `build-scan-push` at "Set up job": `Unable to resolve action aquasecurity/trivy-action@0.28.0`. The action's tags now start with `v` (`v0.28.0` ... `v0.36.0`). Fix: workflow uses `aquasecurity/trivy-action@v0.36.0`. (`test`, `preflight` and `terraform-check` passed in that run.)
