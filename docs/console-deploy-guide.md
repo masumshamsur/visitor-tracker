@@ -5,7 +5,7 @@ This project builds the same AWS infrastructure twice:
 - **Attempt 1 · AWS Console (Steps 1–31):** you create every piece by hand.
 - **Attempt 2 · Terraform (Steps T1–T16):** you write the Terraform code yourself, file by file, then build, deploy and destroy everything with a few commands.
 
-Doing it by hand first teaches you what each Terraform resource really is.
+Doing it by hand first teaches you what each Terraform resource really is, but it's optional. **To go straight to Terraform**, do Phase 0 (Steps 1–3), then jump to Step T1. The Terraform steps include everything you need from the console part.
 
 ### What you're building
 
@@ -280,7 +280,7 @@ docker buildx build --platform linux/amd64 -t $REPO_URI:manual-1 --push .
 3. **Configure cluster** page:
    - **Name:** `visitor-tracker-eks`
    - **Cluster IAM role:** `visitor-tracker-eks-cluster-role`
-   - **Kubernetes version:** keep the default (the newest version). Never pick a version marked *extended support*, because that costs 6× more per hour.
+   - **Kubernetes version:** pick **1.35** if it is listed in standard support. It matches your kubectl (v1.34, which supports clusters up to one minor version newer) and the Terraform code in attempt 2. If 1.35 is only available in *extended support*, pick the newest version instead and upgrade kubectl first (`brew install kubectl`). Never pick a version marked *extended support*, because that costs 6× more per hour.
    - **Upgrade policy:** Standard
    - **Cluster access** → **Bootstrap cluster administrator access:** **Allow** (this makes *your console identity* a cluster admin). **Cluster authentication mode:** **EKS API**.
    - Leave secrets encryption off. Click **Next**.
@@ -850,7 +850,7 @@ helm -n kube-system uninstall aws-load-balancer-controller
 8. **ECR** → select `visitor-tracker` → **Delete** (type `delete` to confirm; this deletes all its images).
 9. **IAM** → **Roles**: delete `visitor-tracker-eks-cluster-role`, `visitor-tracker-eks-node-role`, `visitor-tracker-lbc-role` and `visitor-tracker-github-ci`.
 10. **IAM** → **Policies**: delete `AWSLoadBalancerControllerIAMPolicy`.
-11. **IAM** → **Identity providers**: delete `token.actions.githubusercontent.com` (the Terraform in attempt 2 creates it again, and it would fail if it already exists).
+11. **IAM** → **Identity providers**: leave `token.actions.githubusercontent.com` in place. Another project in this account uses it, and the Terraform in attempt 2 reuses it.
 12. **CloudWatch** → **Log groups**: delete any `/aws/eks/visitor-tracker-eks/…` groups, if present.
 13. Clean up your kubeconfig:
 
@@ -879,12 +879,12 @@ kubectl config delete-context $(kubectl config current-context)
 | 13 Your admin access | `enable_cluster_creator_admin_permissions = true` in `eks.tf` |
 | 14–15 LBC policy, role, Pod Identity | `iam-lbc.tf` + `policies/aws-load-balancer-controller.json` |
 | 16–17 Helm installs | `monitoring/install.sh` (Step T14) |
-| 21–22 GitHub OIDC and CI role | `iam-github.tf` |
+| 21–22 GitHub OIDC and CI role | `iam-github.tf` (looks up the existing GitHub provider, creates the CI role) |
 | 23 Access entry for CI | `access_entries.github_ci` in `eks.tf` |
 
 Before attempt 2:
 
-- [ ] Confirm Step 30 is fully done (especially that the GitHub identity provider is deleted)
+- [ ] Confirm Step 30 is fully done (the GitHub identity provider stays; Terraform reuses it)
 - [ ] Continue with Step T1
 
 # Attempt 2 · Terraform setup
@@ -895,9 +895,11 @@ Before attempt 2:
 
 **Time:** 10 min · **Cost:** free
 
-In attempt 2 you build the **same infrastructure** as in attempt 1, but written as code. Terraform reads `.tf` files, works out what to create, and creates it in the right order. You write the code yourself, file by file, following Steps T2–T11.
+In attempt 2 you build the **same infrastructure** as the console steps describe, but written as code. Terraform reads `.tf` files, works out what to create, and creates it in the right order. You write the code yourself, file by file, following Steps T2–T11.
 
-1. Make sure attempt 1 is fully torn down (Step 30). Terraform uses the same names (`visitor-tracker-eks`, `visitor-tracker-github-ci` and so on) and fails if they already exist. Pay special attention to the **GitHub identity provider** in IAM: an account can only have one.
+1. Make sure none of this project's AWS resources exist yet. Terraform uses fixed names (`visitor-tracker-eks`, `visitor-tracker-github-ci` and so on) and fails if they already exist.
+   - **GitHub identity provider:** check IAM → **Identity providers** for `token.actions.githubusercontent.com`. Your account already has one (from another project), and the code in Step T9 is written to **reuse** it. If an account had none, you'd create it once in the console (Step 21) before running Terraform.
+   - **If you did the console steps:** make sure the Step 30 teardown is complete.
 2. Check your tools:
 
 ```bash
@@ -909,12 +911,14 @@ helm version --short
 
 You need **Terraform 1.10 or newer** (for S3 state locking). You have 1.16.
 
-3. Keep your GitHub repository and its `production` environment from attempt 1. You'll reuse them.
+3. Your GitHub repository already exists: https://github.com/masumshamsur/visitor-tracker. Step T15 connects it to AWS.
 
 > **About the Kubernetes version:** the code uses `1.35`. Before you start, open **EKS** → **Create cluster** in the console and check which versions are offered *without* "extended support". If 1.35 is in extended support, use the newest standard version in `variables.tf` (Step T5).
 
 ### Verify
-- [ ] Step 30 teardown is complete (no EKS cluster, no `visitor-tracker-vpc`, no GitHub identity provider in IAM)
+- [ ] No `visitor-tracker` resources exist in the account yet
+- [ ] IAM → Identity providers lists `token.actions.githubusercontent.com` (reused by Step T9)
+- [ ] Kubernetes **1.35** is offered with standard support (until March 26, 2027)
 - [ ] `terraform version` shows 1.10 or newer
 - [ ] `aws sts get-caller-identity` shows the right account
 
@@ -1060,13 +1064,13 @@ terraform apply
 ```
 
 - `init` downloads the AWS provider (the plugin that talks to AWS).
-- `plan` shows what will be created: **5 to add** (the bucket and its four settings). The account lookup is only read, so it isn't counted.
+- `plan` shows what will be created: **4 to add** (the bucket and its three settings). The account lookup is only read, so it isn't counted.
 - `apply` shows the plan again and asks you to type `yes`.
 
 4. Note the bucket name from the output (`state_bucket_name`).
 
 ### Verify
-- [ ] `terraform apply` ends with `Apply complete! Resources: 5 added`
+- [ ] `terraform apply` ends with `Apply complete! Resources: 4 added`
 - [ ] **S3** console shows `visitor-tracker-tfstate-<account ID>` with **Bucket Versioning: Enabled** (Properties tab) and **Block all public access: On** (Permissions tab)
 - [ ] `terraform/bootstrap/terraform.tfstate` exists on your laptop
 
@@ -1400,10 +1404,11 @@ What it does:
 Create `terraform/iam-github.tf`:
 
 ```hcl
-# Trust GitHub's login tokens (console Step 21).
-resource "aws_iam_openid_connect_provider" "github" {
-  url            = "https://token.actions.githubusercontent.com"
-  client_id_list = ["sts.amazonaws.com"]
+# GitHub's identity provider already exists in this account (created for another project),
+# and an account can only have one. So look it up instead of creating it.
+# "terraform destroy" will leave it alone.
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
 }
 
 # Who may assume the role: only your repo's main branch and its "production" environment.
@@ -1413,7 +1418,7 @@ data "aws_iam_policy_document" "github_trust" {
 
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
     }
 
     condition {
@@ -1471,7 +1476,7 @@ resource "aws_iam_role_policy" "github_ci" {
 ```
 
 What it does:
-- `aws_iam_openid_connect_provider` is the IAM identity provider for GitHub.
+- `data "aws_iam_openid_connect_provider"` **looks up** the GitHub identity provider that already exists in your account (from another project). An account can only have one, so Terraform reuses it instead of creating it. Because it's a `data` block, `terraform destroy` won't delete it, and your other project keeps working.
 - `data "aws_iam_policy_document" "github_trust"` is the **trust policy**: who may use the role. It allows your repo's `main` branch and its `production` environment, the fix you made by hand in console Step 22. A `data` block like this only builds JSON; it doesn't create anything in AWS.
 - `aws_iam_role` creates the role `visitor-tracker-github-ci`.
 - The second policy document says **what the role may do**: get an ECR login, describe only *this* cluster, and push only to *this* repository. That's tighter than the console version, which allowed `eks:DescribeCluster` on any cluster.
@@ -1600,7 +1605,7 @@ terraform plan -out=tfplan
 - `fmt` tidies the spacing in your files. The GitHub pipeline checks this, so always run it before you commit.
 - `plan -out=tfplan` saves the plan to a file, so `apply` does exactly what you reviewed.
 
-Read through the plan. Lines with `+` will be created. Look for the VPC, subnets, NAT Gateway, the EKS cluster and node group, the ECR repository, the IAM roles and the Pod Identity association. The last line is `Plan: N to add, 0 to change, 0 to destroy.` Expect roughly **70–90 resources** (the two modules create many small pieces, such as security group rules and IAM policy attachments).
+Read through the plan. Lines with `+` will be created. Look for the VPC, subnets, NAT Gateway, the EKS cluster and node group, the ECR repository, the IAM roles and the Pod Identity association. The last line is `Plan: N to add, 0 to change, 0 to destroy.` Expect roughly **60–90 resources** (this build showed 63) (the two modules create many small pieces, such as security group rules and IAM policy attachments).
 
 ### Verify
 - [ ] The plan finishes with `0 to change, 0 to destroy`
@@ -1657,25 +1662,29 @@ The script runs the same `helm install` commands as console Steps 16–17, and a
 
 **Time:** 15 min · **Cost:** free
 
-1. Update the GitHub secret, in case the role ARN changed:
+1. Get the CI role's ARN:
 
 ```bash
 cd ~/Documents/aws/aws-labs/visitor-tracker/terraform
 terraform output -raw github_ci_role_arn
 ```
 
-   GitHub repo → **Settings** → **Secrets and variables** → **Actions** → `AWS_CI_ROLE_ARN` → **Update** with that value.
-
-2. Trigger the pipeline with an empty commit:
+2. Add it as a GitHub secret: repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. **Name:** `AWS_CI_ROLE_ARN`, **Secret:** the ARN → **Add secret**. (If the secret already exists, click it and **Update** it instead.)
+3. Add the manual approval gate: **Settings** → **Environments** → **New environment** → name `production` → **Configure environment** → tick **Required reviewers**, add yourself → **Save protection rules**. (Skip this if `production` already exists.)
+4. Commit your Terraform code and push. The push starts the pipeline:
 
 ```bash
 cd ~/Documents/aws/aws-labs/visitor-tracker
-git commit --allow-empty -m "Deploy to Terraform-built infrastructure"
+git add terraform
+git status
+git commit -m "Add Terraform infrastructure"
 git push
 ```
 
-3. In **Actions**, approve the `production` deploy.
-4. Open the app:
+   Check that `git status` lists your `.tf` files, `.terraform.lock.hcl` and the policy JSON, but **not** `terraform.tfvars`, `.terraform/` or any `.tfstate` file (`.gitignore` keeps those out).
+
+5. In **Actions**, open the run. `preflight` now finds both the `terraform/` folder and the AWS secret, so every job runs. `terraform-check` checks your formatting and validates your code. When `deploy` shows **Waiting for review**, click **Review deployments** → tick `production` → **Approve and deploy**.
+6. Open the app:
 
 ```bash
 kubectl -n visitor-tracker get ingress api
@@ -1683,12 +1692,12 @@ kubectl -n visitor-tracker get ingress api
 
 Open `http://<ADDRESS>` once the ALB is active (2–4 minutes).
 
-> Also commit your Terraform code (`git add terraform && git commit -m "Add Terraform infrastructure"`). The pipeline's `terraform-check` job then checks formatting and validates it on every push.
+> **If `build-scan-push` fails at "Configure AWS credentials":** check the secret value, and that `github_repo` in `terraform.tfvars` is exactly `masumshamsur/visitor-tracker`. **If `terraform-check` fails at `fmt`:** run `terraform fmt -recursive` in `terraform/`, then commit and push again.
 
 ### Verify
 - [ ] All pipeline jobs are green, including `terraform-check`
 - [ ] The app loads from the ALB address and shows 2 pod names after **Send 10 requests**
-- [ ] Optional: repeat Steps 27–28 (Grafana, autoscaling, rollback) on this cluster
+- [ ] Optional: do Steps 27–29 (Grafana, autoscaling, rollback, screenshots) on this cluster; they work the same on a Terraform-built cluster
 
 ## Step T16 · Destroy everything
 
@@ -1735,6 +1744,8 @@ terraform destroy
 ```bash
 kubectl config delete-context $(kubectl config current-context)
 ```
+
+> `terraform destroy` doesn't touch the GitHub identity provider, because your code only looks it up with a `data` block. That's what you want: another project uses it.
 
 > **If `terraform destroy` gets stuck on the VPC or subnets:** a leftover load balancer or network interface is still using them. Check **EC2** → **Load Balancers**, **Target Groups** and **Network Interfaces** for `k8s-` items, delete them, then run `terraform destroy` again.
 
