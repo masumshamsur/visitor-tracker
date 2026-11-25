@@ -667,6 +667,8 @@ The repository already exists and holds the code: **https://github.com/masumsham
 2. **Settings** → **Environments** → **New environment** → name `production` → **Configure environment**.
 3. Tick **Required reviewers**, add yourself → **Save protection rules**.
 
+> **Why this secret?** The pipeline needs AWS access to push the image to ECR and run `kubectl` on EKS. Instead of storing AWS access keys in GitHub, it gets short-lived credentials (about 1 hour) through OIDC. `AWS_CI_ROLE_ARN` tells it **which IAM role** to ask for. AWS only says yes if the request comes from your repo's `main` branch or `production` environment (the role's trust policy). The ARN itself isn't a password; it's stored as a secret to keep your account ID out of the logs. The workflow reads it in the `Configure AWS credentials` step (`role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}`), and `preflight` skips the AWS jobs while it's missing.
+
 ### Verify
 - [ ] The secret `AWS_CI_ROLE_ARN` is listed
 - [ ] The `production` environment has you as a required reviewer
@@ -1670,6 +1672,8 @@ terraform output -raw github_ci_role_arn
 ```
 
 2. Add it as a GitHub secret: repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. **Name:** `AWS_CI_ROLE_ARN`, **Secret:** the ARN → **Add secret**. (If the secret already exists, click it and **Update** it instead.)
+
+   > **Why?** It tells the pipeline which IAM role to use for AWS access, without stored keys. See the note in Step 24.
 3. Add the manual approval gate: **Settings** → **Environments** → **New environment** → name `production` → **Configure environment** → tick **Required reviewers**, add yourself → **Save protection rules**. (Skip this if `production` already exists.)
 4. Commit your Terraform code and push. The push starts the pipeline:
 
