@@ -667,6 +667,8 @@ The repository already exists and holds the code: **https://github.com/masumsham
 2. **Settings** → **Environments** → **New environment** → name `production` → **Configure environment**.
 3. Tick **Required reviewers**, add yourself → **Save protection rules**.
 
+> **Why the `production` environment and required reviewers?** The `deploy` job says `environment: production`, so GitHub pauses it until a listed reviewer clicks **Approve and deploy**. This is the manual approval gate: code is tested, scanned and pushed automatically, but nothing reaches the live cluster until a person says yes. **Save protection rules** is what turns that rule on; if you don't save, the environment exists but has no reviewers, and `deploy` runs straight away. The environment also matters for AWS: the CI role's trust policy accepts the `environment:production` subject, so only this job can deploy. Leave **Prevent self-review** unticked: you're the only reviewer, and ticking it would mean nobody could approve your own pushes.
+
 > **Why this secret?** The pipeline needs AWS access to push the image to ECR and run `kubectl` on EKS. Instead of storing AWS access keys in GitHub, it gets short-lived credentials (about 1 hour) through OIDC. `AWS_CI_ROLE_ARN` tells it **which IAM role** to ask for. AWS only says yes if the request comes from your repo's `main` branch or `production` environment (the role's trust policy). The ARN itself isn't a password; it's stored as a secret to keep your account ID out of the logs. The workflow reads it in the `Configure AWS credentials` step (`role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}`), and `preflight` skips the AWS jobs while it's missing.
 
 ### Verify
@@ -1675,6 +1677,8 @@ terraform output -raw github_ci_role_arn
 
    > **Why?** It tells the pipeline which IAM role to use for AWS access, without stored keys. See the note in Step 24.
 3. Add the manual approval gate: **Settings** → **Environments** → **New environment** → name `production` → **Configure environment** → tick **Required reviewers**, add yourself → **Save protection rules**. (Skip this if `production` already exists.)
+
+   > **Why?** Saving the rule makes the `deploy` job wait for your approval before it changes the live cluster. Without it, every push deploys straight away. See the note in Step 24.
 4. Commit your Terraform code and push. The push starts the pipeline:
 
 ```bash

@@ -73,7 +73,7 @@ jobs:
         run: echo "image=${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - run: docker build -t "${{ steps.meta.outputs.image }}" .
       - name: Scan image (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.image }}
           severity: HIGH,CRITICAL

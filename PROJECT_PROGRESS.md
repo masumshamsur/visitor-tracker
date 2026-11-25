@@ -169,6 +169,8 @@ Steps T1–T16 in `docs/console-deploy-guide.md`. You write the Terraform code y
 
 ## 6. Problems hit and fixes
 
+- **Pipeline: Trivy action not found (2026-11-25):** run 45547467136 failed in `build-scan-push` at "Set up job": `Unable to resolve action aquasecurity/trivy-action@0.28.0`. The action's tags now start with `v` (`v0.28.0` ... `v0.36.0`). Fix: workflow uses `aquasecurity/trivy-action@v0.36.0`. (`test`, `preflight` and `terraform-check` passed in that run.)
+
 - **No Pod Identity association after apply (2026-11-24):** the EKS console showed 0 Pod Identity associations. `terraform/iam-lbc.tf` was empty (0 bytes, likely never saved), so the Load Balancer Controller's policy, role and association were never planned; the policy JSON in `policies/` was fine. Fix: paste the Step T10 code into `iam-lbc.tf`, save, then plan and apply again. Result: association `aws-load-balancer-controller` in `kube-system` with role `visitor-tracker-lbc-role` shows in the console; all 5 add-ons Active.
 
 - **Node group failed: instance type not Free Tier eligible (2026-11-24):** `terraform apply` failed after 33 minutes with `AsgInstanceLaunchFailures ... The specified instance type is not eligible for Free Tier`. The account is on the AWS Free plan, which only launches Free Tier instance types, and `t3.medium` isn't one. Fix: set `node_instance_type = "m7i-flex.large"` (2 vCPU, 8 GiB, Free Tier eligible) in `terraform.tfvars`, then plan and apply again.
